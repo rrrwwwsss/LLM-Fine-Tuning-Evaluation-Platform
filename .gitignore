@@ -1,0 +1,32 @@
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+*.egg-info/
+dist/
+build/
+
+# 环境
+.venv/
+venv/
+env/
+
+# Node
+node_modules/
+frontend/dist/
+
+# 数据库
+data/platform.db
+
+# 日志
+logs/*.log
+
+# 系统
+.DS_Store
+Thumbs.db
+*.swp
+*.swo
+
+# 临时脚本
+fix_*.py
+temp_*.py

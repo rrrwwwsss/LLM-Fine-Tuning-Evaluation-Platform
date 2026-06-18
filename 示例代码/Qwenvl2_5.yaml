@@ -1,0 +1,51 @@
+model_name_or_path: /HTC/rws/Qwen/Qwen3.5-VL-27B
+template: qwen3_5   #模型问答时所使用的prompt模板
+# template: qwen2_vl   #模型问答时所使用的prompt模板
+
+# infer_backend: vllm #choices： [huggingface, vllm]
+stage: sft
+do_train: true
+finetuning_type: lora
+
+# === DoRA配置 ===
+# use_dora: true         # 【核心！】开启权重分解低秩微调 (DoRA)
+lora_rank: 16          # 设置秩大小（默认通常是8，建议16效果更好）
+lora_alpha: 16         # 缩放系数（通常与rank保持一致）
+
+lora_target: q_proj,v_proj,k_proj,o_proj,gate_proj,up_proj,down_proj
+# lora_target: q_proj,k_proj,v_proj,o_proj  # 仅指定注意力层的4个矩阵
+
+dataset: mllm_demo #要跟 dataset_info.json中的dataset_name对应
+# dataset_info: ./data/dataset_info.json
+# template: llama3
+cutoff_len: 2048 # 限制每条训练样本的总 token 长度
+# max_samples: 1000  #最多只使用数据集中的前 1000 条样本。
+overwrite_cache: true 
+# preprocessing_num_workers: 16 # 数据预处理（如分词、图像加载）使用的 CPU 进程数
+# image_max_pixels: 1024
+output_dir: saves/Qwen/Qwen3.5-27B_DoRA_r16_3.2data_2
+logging_steps: 10
+save_steps: 500
+plot_loss: true
+overwrite_output_dir: true
+
+gradient_checkpointing: true #开启梯度检查点
+
+per_device_train_batch_size: 1 
+gradient_accumulation_steps: 8
+learning_rate: 0.00002
+num_train_epochs: 3.0
+lr_scheduler_type: cosine
+warmup_ratio: 0.1
+
+# quantization_bit: 8      # 开启 8-bit 量化
+# flash_attn: fa2 #是否使用FlashAttention。不开这个，模型会把中间无数复杂的关联矩阵全部存到显存里。开启能在芯片底层直接把结果算出来，不保存任何中间过程。
+bf16: true
+# ddp_timeout: 180000000
+
+val_size: 0.1
+per_device_eval_batch_size: 1
+eval_strategy: steps
+eval_steps: 500
+
+# trust_remote_code: true
