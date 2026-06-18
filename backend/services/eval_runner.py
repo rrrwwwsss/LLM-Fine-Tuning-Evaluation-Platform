@@ -252,7 +252,6 @@ class EvalRunner:
                     writer.writerow([idx, prompt_text, img_path, true_label, predicted_label, model_output])
 
             # 计算性能指标
-            
             from sklearn.metrics import (
                 accuracy_score, precision_score, recall_score,
                 f1_score, confusion_matrix, classification_report
