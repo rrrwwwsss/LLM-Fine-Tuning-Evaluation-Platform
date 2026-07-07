@@ -1,6 +1,7 @@
 import json
 import csv
 import logging
+from concurrent.futures import ThreadPoolExecutor, TimeoutError as _FutureTimeout
 logger = logging.getLogger("eval_runner")
 import threading
 import requests
@@ -42,30 +43,68 @@ class EvalRunner:
 
     @classmethod
     def extract_result(cls, response):
+        """从模型输出中提取结果标签，支持多种格式。
+        返回 "yes" 或 "no" 或 "错误"。
+        """
         import json as _json
+        import re as _re
+        
+        # 处理字典
         if isinstance(response, dict):
-            return response.get("result", "错误")
+            val = response.get("result", "")
+            if isinstance(val, str) and val.strip().lower() in ("yes", "no"):
+                return val.strip().lower()
+            return "错误"
+        
+        # 处理列表
         if isinstance(response, list) and response:
-            response = response[-1]
-            if isinstance(response, dict):
-                return response.get("result", "错误")
+            return cls.extract_result(response[-1])
+        
+        # 处理字符串
         if isinstance(response, str):
+            # 去除 <think> 标签
+            cleaned = _re.sub(r"<think>.*?</think>", "", response, flags=_re.DOTALL).strip()
+            # 去除链式思考文本（如 "B\n" 等前置字符）
+            cleaned = _re.sub(r"^[A-Z]\n", "", cleaned).strip()
+            
+            # 先尝试找出所有 JSON 对象中的 "result"
             decoder = _json.JSONDecoder()
             pos = 0
-            all_results = []
-            while True:
-                match_index = response.find("{", pos)
+            json_results = []
+            while pos < len(cleaned):
+                match_index = cleaned.find("{", pos)
                 if match_index == -1:
                     break
                 try:
-                    result_data, end_index = decoder.raw_decode(response[match_index:])
+                    result_data, end_index = decoder.raw_decode(cleaned[match_index:])
                     if isinstance(result_data, dict) and "result" in result_data:
-                        all_results.append(result_data["result"])
+                        val = result_data["result"]
+                        if isinstance(val, str) and val.strip().lower() in ("yes", "no"):
+                            json_results.append(val.strip().lower())
                     pos = match_index + 1
                 except _json.JSONDecodeError:
                     pos = match_index + 1
-            if all_results:
-                return all_results[-1]
+            if json_results:
+                return json_results[-1]
+            
+            # 如果没有 JSON，直接在文本中搜索 yes/no
+            lower_text = cleaned.lower().strip()
+            # 取最后一行中的 yes/no
+            lines = [l.strip() for l in cleaned.split("\n") if l.strip()]
+            for line in reversed(lines):
+                line_lower = line.lower().strip(".,!\"\"' 	")
+                if line_lower in ("yes", "no"):
+                    return line_lower
+                # 取最后一个 yes/no 单词
+                words = _re.findall(r"\byes\b|\bno\b", line_lower)
+                if words:
+                    return words[-1]
+            
+            # 在整个文本中搜索
+            words = _re.findall(r"\byes\b|\bno\b", lower_text)
+            if words:
+                return words[-1]
+        
         return "错误"
 
     @classmethod
@@ -167,17 +206,58 @@ class EvalRunner:
             log_path = Path(str(BASE_DIR / "data" / f"eval_task_{task_id}.log"))
             task.log_path = str(log_path)
             db.commit()
+
+            # 启动看门狗线程：检测任务是否长时间无进展
+            import threading as _th
+            import time as _time
+            watchdog_last = {"count": 0, "prev_count": -1}
+            def _watchdog_fn():
+                while proc_info.get("running", False):
+                    _time.sleep(120)
+                    if watchdog_last["count"] == watchdog_last["prev_count"]:
+                        # 连续 2 分钟无进展，标记超时失败
+                        _db3 = SessionLocal()
+                        try:
+                            _t = _db3.query(EvalTask).filter(EvalTask.id == task_id).first()
+                            if _t and _t.status == "running":
+                                _t.status = "failed"
+                                _t.finished_at = datetime.now()
+                                _db3.commit()
+                                logger.warning(f"Eval task {task_id} timed out (no progress for 2 min)")
+                                proc_info["running"] = False
+                        except Exception as _we:
+                            logger.error(f"Watchdog error: {_we}")
+                        finally:
+                            _db3.close()
+                    watchdog_last["prev_count"] = watchdog_last["count"]
+            _th.Thread(target=_watchdog_fn, daemon=True).start()
+
             results_batch = []
 
+            _eval_pool = ThreadPoolExecutor(max_workers=1)
             processed = 0
             for idx, row in df.iterrows():
                 if not proc_info.get("running", False):
                     break
+                # 每10个样本检查一次模型服务健康状态
+                if processed > 0 and processed % 10 == 0:
+                    try:
+                        _hr = requests.get(api_url.rstrip("/") + "/v1/models", timeout=5)
+                        if _hr.status_code != 200:
+                            logger.warning(f"模型服务健康检查失败，停止评测 task={task_id}")
+                            proc_info["running"] = False
+                            break
+                    except Exception:
+                        logger.warning(f"模型服务无法连接，停止评测 task={task_id}")
+                        proc_info["running"] = False
+                        break
 
                 prompt_text = str(row.get(prompt_col, ""))
                 # 从 model_result 列提取真实标签
                 if "model_result" in df.columns:
                     true_label = cls.extract_result(row.get("model_result", ""))
+                    if not isinstance(true_label, str):
+                        true_label = str(true_label)
                 else:
                     true_label = str(row.get(label_col, ""))
                 img_path = str(row.get(image_col, "")) if image_col else ""
@@ -209,20 +289,25 @@ class EvalRunner:
                         "max_tokens": 512,
                         "temperature": 0.1
                     }
-                    resp = requests.post(
+                    _eval_fut = _eval_pool.submit(
+                        requests.post,
                         api_url.rstrip("/") + "/v1/chat/completions",
                         json=payload,
-                        timeout=120
+                        timeout=60
                     )
-                    if resp.status_code == 200:
-                        result = resp.json()
-                        model_output = result["choices"][0]["message"]["content"]
-                    else:
-                        model_output = f"[API Error: {resp.status_code}]"
-
-                    with open(str(log_path), "a", encoding="utf-8") as lf:
-                        lf.write(f"[{idx}/{total}] {prompt_text[:50]}... -> {model_output[:100]}...\n")
-
+                    try:
+                        _eval_resp = _eval_fut.result(timeout=90)
+                        if _eval_resp.status_code == 200:
+                            result = _eval_resp.json()
+                            model_output = result["choices"][0]["message"]["content"]
+                        else:
+                            model_output = f"[API Error: {_eval_resp.status_code}]"
+                    except _FutureTimeout:
+                        model_output = "[Timeout: 模型响应超时 (90s)]"
+                        logger.warning(f"样本 {idx} API 调用超时 90s")
+                        _eval_fut.cancel()
+                    _eval_pool.shutdown(wait=False)
+                    _eval_pool = ThreadPoolExecutor(max_workers=1)
                 except Exception as e:
                     model_output = f"[Error: {str(e)[:100]}]"
 
@@ -241,6 +326,7 @@ class EvalRunner:
 
                 processed += 1
                 progress = processed / total if total > 0 else 0
+                watchdog_last["count"] = processed
                 db.query(EvalTask).filter(EvalTask.id == task_id).update({
                     "processed_samples": processed, "progress": progress
                 })
@@ -251,6 +337,8 @@ class EvalRunner:
                     writer = csv.writer(cf)
                     writer.writerow([idx, prompt_text, img_path, true_label, predicted_label, model_output])
 
+            _eval_pool.shutdown(wait=False)
+
             # 计算性能指标
             from sklearn.metrics import (
                 accuracy_score, precision_score, recall_score,
@@ -260,11 +348,21 @@ class EvalRunner:
             all_results = db.query(EvalResult).filter(
                 EvalResult.task_id == task_id
             ).all()
-            y_true = [r.true_label for r in all_results]
-            y_pred = [r.predicted_label for r in all_results]
+
+            # 过滤：只保留有效标签（yes/no），排除"错误"等杂值
+            valid_labels = {"yes", "no"}
+            filtered = [(r.true_label, r.predicted_label) for r in all_results
+                        if r.true_label.strip().lower() in valid_labels
+                        and r.predicted_label.strip().lower() in valid_labels]
+            if not filtered:
+                logger.warning(f"评测 task={task_id} 无有效样本可计算指标（所有样本均为无效标签）")
+                y_true, y_pred = [], []
+            else:
+                y_true = [t.lower() for t, _ in filtered]
+                y_pred = [p.lower() for _, p in filtered]
 
             try:
-                labels = sorted(set(y_true + y_pred))
+                labels = ["no", "yes"]
                 acc = accuracy_score(y_true, y_pred)
                 prec = precision_score(y_true, y_pred, average="macro", zero_division=0, labels=labels)
                 rec = recall_score(y_true, y_pred, average="macro", zero_division=0, labels=labels)

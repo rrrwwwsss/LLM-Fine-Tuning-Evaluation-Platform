@@ -1,9 +1,13 @@
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, Depends, HTTPException
+from sqlalchemy.orm import Session
+from database import get_db
+from models import ModelService
 from schemas import (
     ModelServiceCreate, ModelServiceResponse,
     ModelChatRequest, ModelChatResponse, APIResponse
 )
 from services.model_runner import ModelRunner
+from datetime import datetime
 
 router = APIRouter(prefix="/api/v1/model", tags=["模型服务"])
 
@@ -45,9 +49,9 @@ def create_service(data: ModelServiceCreate):
 
 
 @router.post("/{service_id}/start", response_model=APIResponse)
-def start_service(service_id: int):
+def start_service(service_id: int, max_new_tokens: str = "2048"):
     try:
-        ModelRunner.start_service(service_id)
+        ModelRunner.start_service(service_id, max_new_tokens)
         return APIResponse(message="Service starting")
     except Exception as e:
         raise HTTPException(status_code=400, detail=str(e))
@@ -85,6 +89,23 @@ def get_service(service_id: int):
         status=s.status, pid=s.pid,
         log_path=s.log_path, created_at=s.created_at
     ))
+
+
+@router.put("/{service_id}/update", response_model=APIResponse)
+def update_service(service_id: int, data: dict, db: Session = Depends(get_db)):
+    try:
+        service = db.query(ModelService).filter(ModelService.id == service_id).first()
+        if not service:
+            raise HTTPException(status_code=404, detail="Service not found")
+        for field in ["name", "model_name_or_path", "adapter_path", "template", "port"]:
+            if field in data and data[field] is not None:
+                setattr(service, field, data[field])
+        db.commit()
+        return APIResponse(message="Service updated")
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=str(e))
 
 
 @router.get("/{service_id}/logs", response_model=APIResponse)

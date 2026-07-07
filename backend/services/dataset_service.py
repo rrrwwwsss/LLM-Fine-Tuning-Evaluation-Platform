@@ -22,7 +22,7 @@ class DatasetService:
             dataset_dir.mkdir(parents=True, exist_ok=True)
             dest_csv = str(dataset_dir / "original.csv")
             shutil.copy2(csv_path, dest_csv)
-            df = pd.read_csv(dest_csv)
+            df = pd.read_csv(dest_csv, on_bad_lines='skip')
             columns = list(df.columns)
 
             # 前置路径：拼接到图片列
@@ -143,6 +143,36 @@ class DatasetService:
             offset = (page - 1) * page_size
             rows = df.iloc[offset:offset + page_size]
             return {"columns": list(df.columns), "total": total, "page": page, "page_size": page_size, "split": split, "rows": json.loads(rows.to_json(orient="records", force_ascii=False))}
+        finally:
+            db.close()
+
+    @classmethod
+    def delete_row(cls, dataset_id: int, split: str, row_index: int):
+        db = SessionLocal()
+        try:
+            ds = db.query(Dataset).filter(Dataset.id == dataset_id).first()
+            if not ds:
+                raise Exception("Dataset not found")
+            csv_path = ds.train_csv if split == "train" else ds.test_csv
+            if not csv_path or not Path(csv_path).exists():
+                raise Exception(f"{split} set not found")
+            df = pd.read_csv(csv_path)
+            if row_index < 0 or row_index >= len(df):
+                raise Exception("Row index out of range")
+
+            # 重新生成 CSV（去掉目标行）
+            new_df = df.drop(index=row_index).reset_index(drop=True)
+            new_df.to_csv(csv_path, index=False)
+
+            # 更新统计信息
+            new_rows = len(new_df)
+            if split == "train":
+                ds.train_rows = new_rows
+            else:
+                ds.test_rows = new_rows
+            ds.total_rows = (ds.train_rows or 0) + (ds.test_rows or 0)
+            db.commit()
+            return {"new_total": new_rows, "split": split}
         finally:
             db.close()
 

@@ -1,6 +1,6 @@
 ﻿import os
 import tempfile
-from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, Form
+from fastapi import APIRouter, Body, Depends, HTTPException, UploadFile, File, Form
 from sqlalchemy.orm import Session
 from database import get_db
 from models import Dataset
@@ -83,17 +83,27 @@ def preview_split(dataset_id: int, split: str = "train", page: int = 1, page_siz
 
 
 @router.put("/{dataset_id}/row", response_model=APIResponse)
-def update_row(dataset_id: int, data: dict):
+def update_row(dataset_id: int, split: str = Body("train"), row_index: int = Body(...), updates: dict = Body(...)):
     try:
-        split = data.get("split", "train")
-        row_index = data.get("row_index")
-        updates = data.get("updates", {})
-        if row_index is None:
-            raise Exception("row_index is required")
+        import logging
+        logger = logging.getLogger("dataset_router")
+        logger.info(f"update_row: dataset_id={dataset_id}, split={split}, row_index={row_index}, updates={str(updates)[:200]}")
         result = DatasetService.update_row(dataset_id, split, row_index, updates)
         return APIResponse(data=result)
     except Exception as e:
-        raise HTTPException(status_code=400, detail=str(e))@router.get("/{dataset_id}/preview", response_model=APIResponse)
+        raise HTTPException(status_code=400, detail=str(e))
+
+
+@router.delete("/{dataset_id}/row", response_model=APIResponse)
+def delete_row(dataset_id: int, split: str = "train", row_index: int = 0):
+    try:
+        result = DatasetService.delete_row(dataset_id, split, row_index)
+        return APIResponse(data=result, message="Row deleted")
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+
+@router.get("/{dataset_id}/preview", response_model=APIResponse)
 def preview_dataset(dataset_id: int, n: int = 5):
     try:
         result = DatasetService.preview_csv(dataset_id, n)

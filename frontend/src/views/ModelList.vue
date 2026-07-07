@@ -34,6 +34,7 @@
         <template #default="{ row }">
           <el-button size="small" @click="handleChat(row)" :disabled="row.status !== 'running'">对话测试</el-button>
           <el-button size="small" @click="handleLogs(row)">日志</el-button>
+          <el-button size="small" @click="handleEdit(row)" :disabled="row.status === 'running' || row.status === 'starting'">编辑配置</el-button>
           <el-button size="small" type="primary" @click="handleStart(row)"
             :disabled="row.status === 'running' || row.status === 'starting'">
             {{ row.status === "starting" ? "启动中" : "启动" }}
@@ -69,6 +70,10 @@
             <el-input v-model="form.adapter_path" placeholder="如: ./saves/qwen_lora_exp1" />
           </el-tooltip>
         </el-form-item>
+        <el-form-item label="输出 Token 数">
+            <el-input-number v-model="form.max_new_tokens" :min="64" :max="8192" :step="128" style="width: 100%;" />
+            <div style="font-size: 12px; color: #999; margin-top: 4px;">生成回复的最大 token 数</div>
+          </el-form-item>
         <el-form-item label="模型模板" required>
           <el-tooltip content="对话模板，必须与模型匹配" placement="top">
             <el-select v-model="form.template" placeholder="选择模板" style="width: 100%;" filterable allow-create>
@@ -91,11 +96,35 @@
     <el-dialog v-model="showLogs" title="模型服务日志" width="800px" top="3vh">
       <pre style="max-height: 500px; overflow-y: auto; background: #1e1e1e; color: #d4d4d4; padding: 12px; font-size: 12px; border-radius: 4px;">{{ logsText || "(无日志)" }}</pre>
     </el-dialog>
+  <!-- 编辑配置对话框 -->
+  <el-dialog v-model="showEdit" title="编辑模型服务配置" width="600px">
+    <el-form label-width="140px">
+      <el-form-item label="服务名称">
+        <el-input v-model="editForm.name" />
+      </el-form-item>
+      <el-form-item label="基础模型路径">
+        <el-input v-model="editForm.model_name_or_path" />
+      </el-form-item>
+      <el-form-item label="微调权重路径">
+        <el-input v-model="editForm.adapter_path" placeholder="如: saves/finetune_models/qwen_lora_exp1" />
+      </el-form-item>
+      <el-form-item label="模型模板">
+        <el-input v-model="editForm.template" />
+      </el-form-item>
+      <el-form-item label="输出 Token 数">
+        <el-input-number v-model="editForm.max_new_tokens" :min="64" :max="8192" :step="128" style="width: 100%;" />
+      </el-form-item>
+    </el-form>
+    <template #footer>
+      <el-button @click="showEdit = false">取消</el-button>
+      <el-button type="primary" @click="confirmEdit" :loading="editing">保存</el-button>
+    </template>
+  </el-dialog>
   </div>
 </template>
 
 <script setup lang="ts">
-import { ref, onMounted } from "vue"
+import { ref, onMounted, reactive } from "vue"
 import { useRouter } from "vue-router"
 import { modelApi } from "../api"
 import { ElMessage } from "element-plus"
@@ -108,7 +137,7 @@ const creating = ref(false)
 const showLogs = ref(false)
 const logsText = ref("")
 
-const form = ref({ name: "", model_name_or_path: "", adapter_path: "", template: "qwen2.5", port: 0 as number })
+const form = ref({ name: "", model_name_or_path: "", adapter_path: "", template: "qwen2.5", port: 0 as number, max_new_tokens: 2048 })
 
 onMounted(loadServices)
 
@@ -127,10 +156,10 @@ async function handleCreate() {
   try {
     const res = await modelApi.create({ name: form.value.name, model_name_or_path: form.value.model_name_or_path, adapter_path: form.value.adapter_path, template: form.value.template, port: form.value.port || 0 })
     const sid = res.data.data?.id
-    if (sid) await modelApi.start(sid)
+    if (sid) await modelApi.start(sid, form.value.max_new_tokens)
     ElMessage.success("创建成功，服务正在启动")
     showCreate.value = false
-    form.value = { name: "", model_name_or_path: "", adapter_path: "", template: "qwen2.5", port: 0 }
+    form.value = { name: "", model_name_or_path: "", adapter_path: "", template: "qwen2.5", port: 0, max_new_tokens: 2048 }
     await loadServices()
   } catch (e: any) { ElMessage.error(e.response?.data?.detail || "创建失败") }
   finally { creating.value = false }
@@ -149,6 +178,49 @@ async function handleDelete(id: number) {
   catch { ElMessage.error("删除失败") }
 }
 function handleChat(row: any) { router.push("/model/chat/" + row.id) }
+
+const showEdit = ref(false)
+const editing = ref(false)
+const editForm = reactive({
+  id: 0,
+  name: "",
+  model_name_or_path: "",
+  adapter_path: "",
+  template: "",
+  max_new_tokens: 2048
+})
+
+function handleEdit(row: any) {
+  editForm.id = row.id
+  editForm.name = row.name
+  editForm.model_name_or_path = row.model_name_or_path
+  editForm.adapter_path = row.adapter_path || ""
+  editForm.template = row.template || ""
+  editForm.max_new_tokens = row.max_new_tokens || 2048
+  showEdit.value = true
+}
+
+async function confirmEdit() {
+  editing.value = true
+  try {
+    await modelApi.update(editForm.id, {
+      name: editForm.name,
+      model_name_or_path: editForm.model_name_or_path,
+      adapter_path: editForm.adapter_path,
+      template: editForm.template
+    })
+    if (editForm.max_new_tokens) {
+      await modelApi.start(editForm.id, editForm.max_new_tokens)
+    }
+    ElMessage.success("配置已更新")
+    showEdit.value = false
+    await loadServices()
+  } catch (e: any) {
+    ElMessage.error(e.response?.data?.detail || "更新失败")
+  } finally {
+    editing.value = false
+  }
+}
 
 async function handleLogs(row: any) {
   try { const res = await modelApi.getLogs(row.id); logsText.value = res.data.data || "(无日志)"; showLogs.value = true }

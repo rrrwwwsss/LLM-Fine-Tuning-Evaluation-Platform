@@ -135,6 +135,11 @@
       <template #footer>
         <el-button @click="showDetail = false">取消</el-button>
         <el-button type="primary" @click="saveEdit" :loading="saving">保存修改</el-button>
+        <el-popconfirm title="确定删除该条数据?" @confirm="deleteRow">
+          <template #reference>
+            <el-button type="danger" :loading="deleting">删除该条</el-button>
+          </template>
+        </el-popconfirm>
       </template>
     </el-dialog>
   </div>
@@ -168,6 +173,7 @@ const detailRow = ref<any>(null)
 const detailIndex = ref(-1)
 const editAnswer = ref("")
 const saving = ref(false)
+const deleting = ref(false)
 
 const imageCol = computed(() => findCol("image"))
 const promptCol = computed(() => findCol("prompt"))
@@ -244,13 +250,28 @@ async function saveEdit() {
   }
   saving.value = true
   try {
-    await datasetApi.updateRow(dsId, activeSplit.value, detailIndex.value, { [answerCol.value]: editAnswer.value })
+    const rowIdx = detailRow.value?._row_index ?? (detailIndex.value + (page.value - 1) * pageSize.value)
+    await datasetApi.updateRow(dsId, activeSplit.value, rowIdx, { [answerCol.value]: editAnswer.value })
     ElMessage.success("已保存")
     showDetail.value = false
     await loadData()
   } catch (e: any) {
     ElMessage.error(e.response?.data?.detail || "保存失败")
   } finally { saving.value = false }
+}
+
+async function deleteRow() {
+  if (!detailRow.value) return
+  deleting.value = true
+  try {
+    const rowIdx = detailRow.value?._row_index ?? (detailIndex.value + (page.value - 1) * pageSize.value)
+    await datasetApi.deleteRow(dsId, activeSplit.value, rowIdx)
+    ElMessage.success("删除成功")
+    showDetail.value = false
+    await loadData()
+  } catch (e: any) {
+    ElMessage.error(e.response?.data?.detail || "删除失败")
+  } finally { deleting.value = false }
 }
 
 async function confirmSplit() {

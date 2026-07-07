@@ -41,7 +41,7 @@ class ModelRunner:
             db.close()
 
     @classmethod
-    def start_service(cls, service_id: int):
+    def start_service(cls, service_id: int, max_new_tokens: str = "2048"):
         db = SessionLocal()
         try:
             service = db.query(ModelService).filter(ModelService.id == service_id).first()
@@ -60,7 +60,7 @@ class ModelRunner:
 
             thread = threading.Thread(
                 target=cls._run_api_process,
-                args=(service_id, str(log_path), service.port, service.model_name_or_path, service.adapter_path, service.template),
+                args=(service_id, str(log_path), service.port, service.model_name_or_path, service.adapter_path, service.template, max_new_tokens),
                 daemon=True
             )
             thread.start()
@@ -68,15 +68,15 @@ class ModelRunner:
             db.close()
 
     @classmethod
-    def _run_api_process(cls, service_id: int, log_path: str, port: int, model_name_or_path: str, adapter_path: str, template: str):
+    def _run_api_process(cls, service_id: int, log_path: str, port: int, model_name_or_path: str, adapter_path: str, template: str, max_new_tokens: str = "2048"):
         proc_info = {"running": True}
         cls._instances[service_id] = proc_info
         db = SessionLocal()
         try:
-            cmd = ["llamafactory-cli", "api", "--model_name_or_path", model_name_or_path, "--template", template, "--finetuning_type", "lora", "--max_new_tokens", "2048"]
+            cmd = ["llamafactory-cli", "api", "--model_name_or_path", model_name_or_path, "--template", template, "--finetuning_type", "lora", "--max_new_tokens", max_new_tokens]
             if adapter_path:
                 cmd.extend(["--adapter_name_or_path", adapter_path])
-            env = dict(os.environ, API_PORT=str(port))
+            env = dict(os.environ, API_PORT=str(port), DISABLE_VERSION_CHECK="1")
 
             with open(log_path, "w", encoding="utf-8") as log_f:
                 log_f.write(f"Starting: {' '.join(cmd)}\n")

@@ -19,7 +19,9 @@ export const datasetApi = {
   split: (id: number, trainRatio = 0.8) => api.post('/dataset/' + id + '/split', { train_ratio: trainRatio }),
   delete: (id: number) => api.delete('/dataset/' + id),
   previewSplit: (id: number, split = "train", page = 1, pageSize = 50) => api.get("/dataset/" + id + "/preview-split", { params: { split, page, page_size: pageSize } }),
-  updateRow: (id: number, split: string, rowIndex: number, updates: object) => api.put("/dataset/" + id + "/row", { split, row_index: rowIndex, updates }),  getForFinetune: () => api.get('/dataset/for-finetune'),
+  updateRow: (id: number, split: string, rowIndex: number, updates: object) => api.put("/dataset/" + id + "/row", { split, row_index: rowIndex, updates }),
+  deleteRow: (id: number, split: string, rowIndex: number) => api.delete("/dataset/" + id + "/row", { params: { split, row_index: rowIndex } }),
+  getForFinetune: () => api.get('/dataset/for-finetune'),
   getForEval: () => api.get('/dataset/for-eval'),
 }
 
@@ -54,6 +56,7 @@ export const evalApi = {
   delete: (id: number) => api.delete('/eval/' + id),
   getResults: (id: number, page = 1, pageSize = 50) => api.get('/eval/' + id + '/results', { params: { page, page_size: pageSize } }),
   getMetrics: (id: number) => api.get('/eval/' + id + '/metrics'),
+  update: (id: number, data: any) => api.put('/eval/' + id + '/update', data),
 }
 
 
@@ -68,7 +71,7 @@ export const modelApi = {
     template?: string
     port?: number
   }) => api.post('/model/create', data),
-  start: (id: number) => api.post('/model/' + id + '/start'),
+  start: (id: number, max_new_tokens = 2048) => api.post('/model/' + id + '/start', { max_new_tokens }),
   stop: (id: number) => api.post('/model/' + id + '/stop'),
   delete: (id: number) => api.delete('/model/' + id),
   getLogs: (id: number) => api.get('/model/' + id + '/logs'),
@@ -78,4 +81,5 @@ export const modelApi = {
     image_path: imagePath || ''
   }),
   getRunning: () => api.get('/model/running'),
+  update: (id: number, data: any) => api.put('/model/' + id + '/update', data),
 }

@@ -27,6 +27,7 @@
       <el-table-column label="操作" width="230" fixed="right">
         <template #default="{ row }">
           <el-button size="small" @click="$router.push('/eval/' + row.id)">详情</el-button>
+          <el-button size="small" @click="handleEdit(row)" :disabled="row.status === 'running'">编辑配置</el-button>
           <el-button size="small" type="primary" @click="handleStart(row)" :disabled="row.status === 'running'">
             {{ row.status === 'running' ? '运行中' : '启动' }}
           </el-button>
@@ -78,11 +79,47 @@
         <el-button type="primary" @click="handleCreate" :loading="creating">创建并启动</el-button>
       </template>
     </el-dialog>
+  <!-- 编辑配置对话框 -->
+  <el-dialog v-model="showEdit" title="编辑评测任务配置" width="600px">
+    <el-form :model="editForm" label-width="140px">
+      <el-form-item label="任务名称" required>
+        <el-input v-model="editForm.name" placeholder="输入任务名称" />
+      </el-form-item>
+      <el-form-item label="模型服务" required>
+        <el-select v-model="editForm.model_service_id" placeholder="选择运行中的模型服务" style="width: 100%;">
+          <el-option
+            v-for="s in runningServices"
+            :key="s.id"
+            :label="s.name + ' (' + s.model_name_or_path.split('/').pop() + ')'"
+            :value="s.id"
+          />
+          <el-option label="没有可用的模型服务" :value="0" disabled />
+        </el-select>
+        <div style="font-size: 12px; color: #e6a23c; margin-top: 4px;" v-if="runningServices.length === 0">
+          尚无运行中的模型服务，请先在「模型服务」页面启动
+        </div>
+      </el-form-item>
+      <el-form-item label="评测数据集" required>
+        <el-select v-model="editForm.dataset_id" placeholder="选择已划分的数据集" style="width: 100%;">
+          <el-option
+            v-for="d in availableDatasets"
+            :key="d.id"
+            :label="d.name + ' (' + d.test_rows + '条测试)'"
+            :value="d.id"
+          />
+        </el-select>
+      </el-form-item>
+    </el-form>
+    <template #footer>
+      <el-button @click="showEdit = false">取消</el-button>
+      <el-button type="primary" @click="confirmEdit" :loading="editing">保存</el-button>
+    </template>
+  </el-dialog>
   </div>
 </template>
 
 <script setup lang="ts">
-import { ref, onMounted } from 'vue'
+import { ref, onMounted, reactive } from 'vue'
 import { evalApi, datasetApi, modelApi } from '../api'
 import { ElMessage } from 'element-plus'
 
@@ -151,6 +188,72 @@ async function handleCreate() {
   } catch (e: any) {
     ElMessage.error(e.response?.data?.detail || '创建失败')
   } finally { creating.value = false }
+}
+
+const showEdit = ref(false)
+const editing = ref(false)
+const editForm = reactive({
+  id: 0,
+  name: "",
+  dataset_id: 0,
+  dataset_path: "",
+  model_name_or_path: "",
+  adapter_path: "",
+  template: "",
+  model_service_id: 0
+})
+
+async function loadRunningServices() {
+  try {
+    const res = await modelApi.getRunning()
+    return res.data.data
+  } catch { return null }
+}
+
+function handleEdit(row: any) {
+  editForm.id = row.id
+  editForm.name = row.name
+  editForm.model_service_id = row.model_service_id || 0
+  // 根据 model_service_id 反查服务信息
+  const svc = runningServices.value.find((s: any) => s.id === editForm.model_service_id)
+  editForm.model_name_or_path = svc?.model_name_or_path || row.model_name_or_path || ""
+  editForm.adapter_path = svc?.adapter_path || row.adapter_path || ""
+  editForm.template = svc?.template || row.template || ""
+  // 根据 dataset_path 反查数据集
+  const ds = availableDatasets.value.find((d: any) => d.test_csv === row.dataset_path)
+  editForm.dataset_id = ds?.id || 0
+  editForm.dataset_path = row.dataset_path || ""
+  showEdit.value = true
+}
+
+async function confirmEdit() {
+  if (!editForm.name || !editForm.model_service_id || !editForm.dataset_id) {
+    ElMessage.warning("请填写完整信息")
+    return
+  }
+  editing.value = true
+  try {
+    // 从选中的服务中获取模型信息
+    const svc = runningServices.value.find((s: any) => s.id === editForm.model_service_id)
+    // 从选中的数据集中获取路径
+    const ds = availableDatasets.value.find((d: any) => d.id === editForm.dataset_id)
+
+    await evalApi.update(editForm.id, {
+      name: editForm.name,
+      dataset_path: ds?.test_csv || editForm.dataset_path,
+      model_name_or_path: svc?.model_name_or_path || "",
+      adapter_path: svc?.adapter_path || "",
+      template: svc?.template || "",
+      model_service_id: editForm.model_service_id
+    })
+    ElMessage.success("配置已更新")
+    showEdit.value = false
+    await loadTasks()
+  } catch (e: any) {
+    ElMessage.error(e.response?.data?.detail || "更新失败")
+  } finally {
+    editing.value = false
+  }
 }
 
 async function handleStart(row: any) {

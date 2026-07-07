@@ -7,6 +7,7 @@ from schemas import (
     EvalResultResponse, EvalMetricResponse, APIResponse
 )
 from services.eval_runner import EvalRunner
+from datetime import datetime
 
 router = APIRouter(prefix='/api/v1/eval', tags=['评测任务'])
 
@@ -63,6 +64,26 @@ def get_task(task_id: int, db: Session = Depends(get_db)):
         created_at=task.created_at, updated_at=task.updated_at,
         started_at=task.started_at, finished_at=task.finished_at
     ))
+
+
+@router.put('/{task_id}/update', response_model=APIResponse)
+def update_task(task_id: int, data: dict, db: Session = Depends(get_db)):
+    try:
+        task = db.query(EvalTask).filter(EvalTask.id == task_id).first()
+        if not task:
+            raise HTTPException(status_code=404, detail="Task not found")
+        if task.status == "running":
+            raise HTTPException(status_code=400, detail="Cannot edit a running task")
+        for field in ["name", "dataset_path", "model_name_or_path", "adapter_path", "template", "model_service_id"]:
+            if field in data and data[field] is not None:
+                setattr(task, field, data[field])
+        task.updated_at = datetime.now()
+        db.commit()
+        return APIResponse(message="Task updated")
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=str(e))
 
 
 @router.post('/{task_id}/start', response_model=APIResponse)
