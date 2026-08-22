@@ -54,6 +54,7 @@ class ConnectionManager:
                         'current_step': task.current_step,
                         'total_steps': task.total_steps,
                         'current_loss': task.current_loss,
+                        'loss_history': task.loss_history,
                     })
             elif channel == 'eval':
                 task = db.query(EvalTask).filter(EvalTask.id == task_id).first()

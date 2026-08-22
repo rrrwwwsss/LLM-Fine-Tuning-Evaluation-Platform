@@ -1,6 +1,7 @@
 import { createRouter, createWebHistory } from 'vue-router'
 import DatasetList from '../views/DatasetList.vue'
 import DatasetDetail from '../views/DatasetDetail.vue'
+import DatasetCreate from '../views/DatasetCreate.vue'
 import FinetuneList from '../views/FinetuneList.vue'
 import FinetuneDetail from '../views/FinetuneDetail.vue'
 import EvalList from '../views/EvalList.vue'
@@ -10,6 +11,7 @@ import ModelChat from '../views/ModelChat.vue'
 
 const routes = [
   { path: '/dataset', name: 'DatasetList', component: DatasetList },
+  { path: '/dataset/create', name: 'DatasetCreate', component: DatasetCreate },
   { path: '/dataset/:id', name: 'DatasetDetail', component: DatasetDetail },
   { path: '/', redirect: '/dataset' },
   { path: '/finetune', name: 'FinetuneList', component: FinetuneList },

@@ -12,6 +12,9 @@
             <el-tag :type="statusType(ds.status)" size="small" style="margin-left: 8px;">
               {{ statusLabel(ds.status) }}
             </el-tag>
+            <el-tag :type="trainingStage === 'dpo' ? 'warning' : 'primary'" size="small" style="margin-left: 8px;">
+              {{ trainingStage.toUpperCase() }}
+            </el-tag>
             <span style="color: #666; font-size: 13px; margin-left: 12px;">共 {{ ds.total_rows }} 条</span>
             <span v-if="ds.train_rows" style="color: #666; font-size: 13px; margin-left: 8px;">
               训练 {{ ds.train_rows }} / 测试 {{ ds.test_rows }}
@@ -109,26 +112,23 @@
           </div>
         </div>
 
-        <el-form label-width="100px">
-          <el-form-item :label="promptCol" v-if="promptCol">
-            <el-input type="textarea" :rows="5" :model-value="detailRow[promptCol]" readonly style="font-size: 13px;" />
-          </el-form-item>
-
-          <el-form-item :label="answerCol || '模型输出'">
-            <el-input
-              v-model="editAnswer" style="font-size: 13px;"
-              type="textarea"
-              :rows="7"
-              placeholder="修改模型输出内容..."
-            />
-          </el-form-item>
-
-          <el-form-item label="其他字段" v-if="otherCols.length">
-            <div style="width: 100%;">
-              <div v-for="f in otherCols" :key="f" style="margin-bottom: 3px; font-size: 13px; word-break: break-all;">
-                <strong>{{ f }}:</strong> {{ detailRow[f] }}
-              </div>
+        <el-form label-position="top">
+          <el-form-item v-for="field in editableCols" :key="field" :label="fieldLabel(field)">
+            <el-input-number v-if="columnType(field) === 'number'" v-model="editValues[field]" style="width: 100%;" />
+            <div v-else-if="columnType(field) === 'image'" style="width: 100%; display: flex; gap: 8px;">
+              <el-input v-model="editValues[field]" placeholder="图片相对路径或绝对路径" />
+              <el-upload :show-file-list="false" :http-request="imageUploadHandler(field)">
+                <el-button>上传图片</el-button>
+              </el-upload>
+              <ServerPathPicker v-model="editValues[field]" mode="image" button-text="Linux 图片" title="选择服务器图片" />
             </div>
+            <el-input
+              v-else
+              v-model="editValues[field]"
+              :type="['long_text', 'json'].includes(columnType(field)) ? 'textarea' : 'text'"
+              :rows="['long_text', 'json'].includes(columnType(field)) ? 5 : undefined"
+              style="font-size: 13px;"
+            />
           </el-form-item>
         </el-form>
       </template>
@@ -150,6 +150,7 @@ import { ref, onMounted, computed } from "vue"
 import { useRoute, useRouter } from "vue-router"
 import { datasetApi } from "../api"
 import { ElMessage } from "element-plus"
+import ServerPathPicker from "../components/ServerPathPicker.vue"
 
 const route = useRoute()
 const router = useRouter()
@@ -171,14 +172,14 @@ const splitRatio = ref(0.8)
 const showDetail = ref(false)
 const detailRow = ref<any>(null)
 const detailIndex = ref(-1)
-const editAnswer = ref("")
 const saving = ref(false)
 const deleting = ref(false)
+const schemaColumns = ref<any[]>([])
+const trainingStage = ref('sft')
+const editValues = ref<Record<string, any>>({})
 
-const imageCol = computed(() => findCol("image"))
-const promptCol = computed(() => findCol("prompt"))
-const answerCol = computed(() => findCol("answer"))
-const otherCols = computed(() => columns.value.filter(c => c !== imageCol.value && c !== promptCol.value && c !== answerCol.value && c !== "_row_id"))
+const imageCol = computed(() => schemaColumns.value.find(c => c.role === 'image')?.name || findCol("image"))
+const editableCols = computed(() => columns.value.filter(c => c !== "_row_id"))
 
 function findCol(type: string): string {
   for (const c of columns.value) {
@@ -190,12 +191,12 @@ function findCol(type: string): string {
   return ""
 }
 
-function isImageCol(col: string): boolean {
-  return col === imageCol.value
-}
-
 function getFileUrl(path: string): string {
-  return '/api/file?path=' + encodeURIComponent(String(path).split('\\').join('/'))
+  let normalized = String(path).replace(/\\/g, '/')
+  if (!normalized.startsWith('/') && !/^[A-Za-z]:\//.test(normalized)) {
+    return `/api/v1/dataset/${dsId}/asset?path=${encodeURIComponent(normalized)}`
+  }
+  return '/api/file?path=' + encodeURIComponent(normalized)
 }
 
 function isImagePath(val: any): boolean {
@@ -204,11 +205,20 @@ function isImagePath(val: any): boolean {
 
 onMounted(async () => {
   await loadDataset()
+  await loadSchema()
   if (ds.value && ds.value.status !== "uploaded") {
     await loadData()
   }
   loading.value = false
 })
+
+async function loadSchema() {
+  try {
+    const res = await datasetApi.getSchema(dsId)
+    schemaColumns.value = res.data.data.columns || []
+    trainingStage.value = res.data.data.training_stage || 'sft'
+  } catch { schemaColumns.value = [] }
+}
 
 async function loadDataset() {
   try {
@@ -239,25 +249,43 @@ async function loadData() {
 function onRowClick(row: any) {
   detailRow.value = row
   detailIndex.value = rows.value.indexOf(row)
-  editAnswer.value = answerCol.value && row[answerCol.value] ? String(row[answerCol.value]) : ""
+  editValues.value = Object.fromEntries(editableCols.value.map(field => [field, row[field] ?? ""]))
   showDetail.value = true
 }
 
 async function saveEdit() {
-  if (!answerCol.value) {
-    ElMessage.warning("未检测到可编辑的列")
-    return
-  }
   saving.value = true
   try {
     const rowIdx = detailRow.value?._row_index ?? (detailIndex.value + (page.value - 1) * pageSize.value)
-    await datasetApi.updateRow(dsId, activeSplit.value, rowIdx, { [answerCol.value]: editAnswer.value })
+    await datasetApi.updateRow(dsId, activeSplit.value, rowIdx, editValues.value)
     ElMessage.success("已保存")
     showDetail.value = false
     await loadData()
   } catch (e: any) {
     ElMessage.error(e.response?.data?.detail || "保存失败")
   } finally { saving.value = false }
+}
+
+function columnType(field: string): string {
+  return schemaColumns.value.find(c => c.name === field)?.type || (field === imageCol.value ? 'image' : 'text')
+}
+
+function fieldLabel(field: string): string {
+  const definition = schemaColumns.value.find(c => c.name === field)
+  const role = definition?.role && definition.role !== 'other' ? ` · ${definition.role}` : ''
+  return field + role
+}
+
+async function uploadImage(field: string, options: any) {
+  try {
+    const res = await datasetApi.uploadImage(dsId, options.file)
+    editValues.value[field] = res.data.data.path
+    ElMessage.success('图片已上传')
+  } catch (e: any) { ElMessage.error(e.response?.data?.detail || '图片上传失败') }
+}
+
+function imageUploadHandler(field: string) {
+  return (options: any) => uploadImage(field, options)
 }
 
 async function deleteRow() {

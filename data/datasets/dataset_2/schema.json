@@ -1,0 +1,47 @@
+{
+  "version": 1,
+  "description": "",
+  "training_stage": "dpo",
+  "columns": [
+    {
+      "name": "prompt_text",
+      "type": "long_text",
+      "role": "prompt",
+      "required": true,
+      "default": "",
+      "source_name": "prompt_text"
+    },
+    {
+      "name": "chosen",
+      "type": "long_text",
+      "role": "chosen",
+      "required": true,
+      "default": "",
+      "source_name": "chosen"
+    },
+    {
+      "name": "rejected",
+      "type": "long_text",
+      "role": "rejected",
+      "required": true,
+      "default": "",
+      "source_name": "rejected"
+    },
+    {
+      "name": "image_path",
+      "type": "image",
+      "role": "image",
+      "required": false,
+      "default": "",
+      "source_name": "image_path"
+    },
+    {
+      "name": "type",
+      "type": "text",
+      "role": "label",
+      "required": false,
+      "default": "",
+      "source_name": "type"
+    }
+  ]
+}

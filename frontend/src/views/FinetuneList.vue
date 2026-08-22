@@ -12,6 +12,11 @@
     <el-table :data="tasks" stripe style="width: 100%" v-loading="loading">
       <el-table-column prop="id" label="ID" width="70" />
       <el-table-column prop="name" label="任务名称" min-width="160" />
+      <el-table-column label="训练类型" width="100">
+        <template #default="{ row }">
+          <el-tag :type="row.training_stage === 'dpo' ? 'warning' : 'primary'" size="small">{{ (row.training_stage || 'sft').toUpperCase() }}</el-tag>
+        </template>
+      </el-table-column>
       <el-table-column prop="base_model" label="基础模型" min-width="200" show-overflow-tooltip />
       <el-table-column label="状态" width="120">
         <template #default="{ row }">
@@ -51,14 +56,25 @@
           </el-tooltip>
         </el-form-item>
 
+        <el-form-item label="训练类型" required>
+          <el-radio-group v-model="form.stage" @change="handleStageChange">
+            <el-radio-button value="sft">SFT 监督微调</el-radio-button>
+            <el-radio-button value="dpo">DPO 偏好优化</el-radio-button>
+          </el-radio-group>
+          <div style="font-size: 12px; color: #999; margin-top: 4px;">
+            DPO 数据集必须包含 Prompt、Chosen 和 Rejected，并已转换为偏好数据格式
+          </div>
+        </el-form-item>
+
         <el-form-item label="训练数据集" required>
           <el-tooltip content="选择已在数据集管理中上传并转换好的数据集，YAML 会自动引用该数据集的 dataset_info.json" placement="top">
             <el-select v-model="form.dataset_id" placeholder="选择已转换的数据集" style="width: 100%;">
               <el-option
                 v-for="d in availableDatasets"
                 :key="d.id"
-                :label="`${d.name} (${d.train_rows}条训练)`"
+                :label="`${d.name} [${(d.training_stage || 'sft').toUpperCase()}] (${d.train_rows}条训练)`"
                 :value="d.id"
+                :disabled="(d.training_stage || 'sft') !== form.stage"
               />
               <el-option label="手动填写 YAML" :value="0" />
             </el-select>
@@ -67,7 +83,10 @@
 
         <el-form-item label="基础模型路径" required>
           <el-tooltip content="指定预训练模型的本地路径或 HuggingFace 模型名，如 /path/to/Qwen2.5-7B-Instruct 或 Qwen/Qwen2.5-7B-Instruct" placement="top">
-            <el-input v-model="form.model_name_or_path" placeholder="如: /path/to/Qwen2.5-7B-Instruct" />
+            <div class="path-input-row">
+              <el-input v-model="form.model_name_or_path" placeholder="如: /HTC/rws/Qwen/Qwen3.5-VL-27B" />
+              <ServerPathPicker v-model="form.model_name_or_path" button-text="浏览 Linux 模型目录" title="选择基础模型目录" />
+            </div>
           </el-tooltip>
         </el-form-item>
 
@@ -110,8 +129,31 @@
           <el-col :span="12">
             <el-form-item label="输出目录">
               <el-tooltip content="微调权重保存路径。默认 ./saves/任务名称，可自定义" placement="top">
-                <el-input v-model="form.output_dir" placeholder="自动填充: ./saves/任务名称" />
+                <div class="path-input-row">
+                  <el-input v-model="form.output_dir" placeholder="自动填充: ./saves/任务名称" />
+                  <ServerPathPicker v-model="form.output_dir" button-text="选择 Linux 目录" title="选择训练输出目录" />
+                </div>
               </el-tooltip>
+            </el-form-item>
+          </el-col>
+        </el-row>
+
+        <el-row v-if="form.stage === 'dpo'" :gutter="16">
+          <el-col :span="12">
+            <el-form-item label="DPO Beta">
+              <el-tooltip content="偏好损失强度，LLaMA-Factory 默认值为 0.1" placement="top">
+                <el-input-number v-model="form.pref_beta" :min="0.001" :max="2" :step="0.05" style="width: 100%;" />
+              </el-tooltip>
+            </el-form-item>
+          </el-col>
+          <el-col :span="12">
+            <el-form-item label="偏好损失">
+              <el-select v-model="form.pref_loss" style="width: 100%;">
+                <el-option label="Sigmoid（标准 DPO）" value="sigmoid" />
+                <el-option label="Hinge" value="hinge" />
+                <el-option label="IPO" value="ipo" />
+                <el-option label="KTO Pair" value="kto_pair" />
+              </el-select>
             </el-form-item>
           </el-col>
         </el-row>
@@ -168,6 +210,7 @@
 import { ref, onMounted, computed } from "vue"
 import { finetuneApi, datasetApi } from "../api"
 import { ElMessage } from "element-plus"
+import ServerPathPicker from "../components/ServerPathPicker.vue"
 
 const tasks = ref<any[]>([])
 const loading = ref(false)
@@ -180,11 +223,14 @@ const availableDatasets = ref<any[]>([])
 
 const form = ref({
   name: "",
+  stage: "sft",
   dataset_id: 0,
   model_name_or_path: "",
   template: "qwen2.5",
   lora_target: ["q_proj", "v_proj"] as string[],
   output_dir: "",
+  pref_beta: 0.1,
+  pref_loss: "sigmoid",
   yaml_config: "",
 })
 
@@ -241,8 +287,9 @@ function generateYaml() {
     "overwrite_cache: true",
     "",
     "### 训练",
-    "stage: sft",
+    "stage: " + f.stage,
     "do_train: true",
+    ...(f.stage === "dpo" ? ["pref_beta: " + f.pref_beta, "pref_loss: " + f.pref_loss] : []),
     "output_dir: " + outputDir,
     "logging_steps: 10",
     "save_steps: 500",
@@ -252,17 +299,13 @@ function generateYaml() {
     "",
     "per_device_train_batch_size: 1",
     "gradient_accumulation_steps: 8",
-    "learning_rate: 0.00002",
+    "learning_rate: " + (f.stage === "dpo" ? "0.000005" : "0.00002"),
     "num_train_epochs: 3.0",
     "lr_scheduler_type: cosine",
     "warmup_ratio: 0.1",
     "",
     "bf16: true",
-    "",
-    "val_size: 0.1",
-    "per_device_eval_batch_size: 1",
-    "eval_strategy: steps",
-    "eval_steps: 500",
+    ...(f.stage === "sft" ? ["", "val_size: 0.1", "per_device_eval_batch_size: 1", "eval_strategy: steps", "eval_steps: 500"] : []),
   ].join("\n")
 
   form.value.yaml_config = yaml
@@ -307,16 +350,26 @@ async function handleCreate() {
   }
   creating.value = true
   try {
+    const selectedDataset = form.value.dataset_id ? availableDatasets.value.find((d: any) => d.id === form.value.dataset_id) : null
+    if (selectedDataset && (selectedDataset.training_stage || 'sft') !== form.value.stage) {
+      ElMessage.warning(`请选择 ${form.value.stage.toUpperCase()} 类型的数据集`)
+      return
+    }
     const res = await finetuneApi.create({ name: form.value.name, yaml_config: form.value.yaml_config })
     const taskId = res.data.data?.id
     if (taskId) await finetuneApi.start(taskId)
     ElMessage.success("创建成功")
     showCreate.value = false
-    form.value = { name: "", dataset_id: 0, model_name_or_path: "", template: "qwen2.5", lora_target: ["q_proj", "v_proj"], output_dir: "", yaml_config: "" }
+    form.value = { name: "", stage: "sft", dataset_id: 0, model_name_or_path: "", template: "qwen2.5", lora_target: ["q_proj", "v_proj"], output_dir: "", pref_beta: 0.1, pref_loss: "sigmoid", yaml_config: "" }
     await loadTasks()
   } catch (e: any) {
     ElMessage.error(e.response?.data?.detail || "创建失败")
   } finally { creating.value = false }
+}
+
+function handleStageChange() {
+  form.value.dataset_id = 0
+  form.value.yaml_config = ""
 }
 
 async function handleStart(row: any) {
@@ -350,3 +403,8 @@ function formatTime(t: string) {
   return new Date(t).toLocaleString("zh-CN")
 }
 </script>
+
+<style scoped>
+.path-input-row { display: flex; align-items: center; width: 100%; }
+.path-input-row .el-input { flex: 1; }
+</style>

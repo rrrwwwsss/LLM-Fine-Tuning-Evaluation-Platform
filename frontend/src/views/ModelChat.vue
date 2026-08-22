@@ -23,7 +23,7 @@
           <el-input v-model="inputText" type="textarea" :rows="3" placeholder="输入文本（留空则只传图片）" />
           <div style="display: flex; gap: 12px; align-items: center;">
             <el-input v-model="imagePath" placeholder="图片路径（可选）" style="flex: 1;" />
-            <el-button @click="selectImage">选择图片</el-button>
+            <ServerPathPicker v-model="imagePath" mode="image" button-text="选择 Linux 图片" title="选择服务器图片" />
             <el-button type="primary" @click="sendMessage" :loading="sending">发送</el-button>
             <el-button @click="clearChat">清空</el-button>
           </div>
@@ -56,7 +56,8 @@
 import { ref, onMounted, nextTick } from "vue"
 import { useRoute } from "vue-router"
 import { modelApi } from "../api"
-import { ElMessage, ElMessageBox } from "element-plus"
+import { ElMessage } from "element-plus"
+import ServerPathPicker from "../components/ServerPathPicker.vue"
 
 const route = useRoute()
 const serviceId = Number(route.params.id)
@@ -90,13 +91,6 @@ async function sendMessage() {
 
 function clearChat() { messages.value = []; inputText.value = ""; imagePath.value = "" }
 function scrollChat() { nextTick(() => { if (chatRef.value) chatRef.value.scrollTop = chatRef.value.scrollHeight }) }
-
-async function selectImage() {
-  try {
-    const result = await ElMessageBox.prompt("请输入完整图片路径", "选择图片", { inputPlaceholder: "如: /path/to/image.jpg", confirmButtonText: "确定", cancelButtonText: "取消" })
-    if (result.value) imagePath.value = result.value
-  } catch { }
-}
 
 function getFileUrl(path: string): string { if (!path) return ""; return "/api/file?path=" + encodeURIComponent(String(path)) }
 </script>

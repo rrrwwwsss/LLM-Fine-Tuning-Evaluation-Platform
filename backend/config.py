@@ -1,5 +1,7 @@
 ﻿from pathlib import Path
 
+import os
+
 BASE_DIR = Path(__file__).resolve().parent.parent
 DATABASE_URL = f"sqlite+aiosqlite:///{BASE_DIR / 'data' / 'platform.db'}"
 YAML_TEMPLATES_DIR = BASE_DIR / "yaml_templates"
@@ -11,6 +13,11 @@ API_PORT_START = 18081
 API_PORT_END = 18100
 APP_HOST = "0.0.0.0"
 APP_PORT = 18080
+
+# Comma-separated server directories exposed by the dataset directory browser.
+# Example: SERVER_BROWSE_ROOTS=/HTC/rws/data,/mnt/datasets
+_browse_roots = [item.strip() for item in os.getenv("SERVER_BROWSE_ROOTS", "").split(",") if item.strip()]
+SERVER_BROWSE_ROOTS = [Path(item).expanduser().resolve() for item in _browse_roots] or [BASE_DIR.resolve()]
 
 Path(BASE_DIR / "data").mkdir(parents=True, exist_ok=True)
 SAVES_DIR.mkdir(parents=True, exist_ok=True)

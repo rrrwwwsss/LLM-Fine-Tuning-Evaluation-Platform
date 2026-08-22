@@ -1,4 +1,4 @@
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from typing import Optional, Any
 from datetime import datetime
 
@@ -41,10 +41,70 @@ class DatasetListResponse(BaseModel):
     dataset_info_json: str = ''
     train_json: str = ''
     test_csv: str = ''
+    training_stage: str = 'sft'
     created_at: Any = None
 
 class DatasetSplitRequest(BaseModel):
     train_ratio: float = 0.8
+
+
+class DatasetColumnDefinition(BaseModel):
+    name: str
+    type: str = 'text'
+    role: str = 'other'
+    required: bool = False
+    default: Any = ''
+    source_name: Optional[str] = None
+
+
+class DatasetCreateRequest(BaseModel):
+    name: str
+    description: str = ''
+    training_stage: str = 'sft'
+    columns: list[DatasetColumnDefinition]
+    train_ratio: float = 0.8
+    image_prefix: str = ''
+
+
+class DatasetSchemaUpdate(BaseModel):
+    description: str = ''
+    training_stage: str = 'sft'
+    columns: list[DatasetColumnDefinition]
+    image_prefix: str = ''
+
+
+class DatasetRowsCreate(BaseModel):
+    rows: list[dict[str, Any]] = Field(default_factory=list)
+
+
+class DatasetSourceRowUpdate(BaseModel):
+    row_index: int
+    updates: dict[str, Any]
+
+
+class DatasetSourceBatchRequest(BaseModel):
+    action: str
+    scope: str = 'selected'
+    row_indices: list[int] = Field(default_factory=list)
+    filter_column: str = ''
+    filter_mode: str = 'contains'
+    filter_value: Any = ''
+    assignment_column: str = ''
+    assignment_value: Any = ''
+
+
+class DatasetServerFolderImport(BaseModel):
+    folder_path: str
+    path_base: str
+    common_values: dict[str, Any] = Field(default_factory=dict)
+
+
+class DatasetServerCsvImport(BaseModel):
+    name: str
+    csv_path: str
+    prefix_path: str = ''
+
+
 class FinetuneTaskResponse(BaseModel):
     id: int
     name: str
@@ -73,6 +133,7 @@ class FinetuneTaskListResponse(BaseModel):
     base_model: str
     status: str
     progress: float
+    training_stage: str = 'sft'
     created_at: datetime
 
 # ====== 评测 ======

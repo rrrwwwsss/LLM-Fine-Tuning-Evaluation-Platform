@@ -39,7 +39,15 @@
       <!-- Loss 曲线 -->
       <el-card shadow="never" style="margin-bottom: 16px;">
         <template #header><span>Loss 曲线</span></template>
-        <div ref="lossChartRef" style="height: 300px;"></div>
+        <div v-show="hasLossData" ref="lossChartRef" style="height: 300px;"></div>
+        <div v-if="!hasLossData && !isFinished" class="loss-placeholder">
+          等待训练产生 Loss 数据…
+        </div>
+        <div v-else-if="!hasLossData && lossImageAvailable" class="loss-image-wrap">
+          <img :src="lossImageUrl" alt="训练 Loss 曲线" @load="lossImageLoaded = true" @error="lossImageAvailable = false" />
+          <span v-if="!lossImageLoaded">正在加载训练生成的 Loss 曲线图片…</span>
+        </div>
+        <el-empty v-else-if="!hasLossData" description="无法加载 Loss 曲线：训练记录和 training_loss.png 均不可用" />
       </el-card>
 
       <!-- 实时日志 -->
@@ -61,7 +69,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, onMounted, onUnmounted, watch, nextTick } from 'vue'
+import { ref, computed, onMounted, onUnmounted, watch, nextTick } from 'vue'
 import { useRoute } from 'vue-router'
 import { finetuneApi } from '../api'
 import { ElMessage } from 'element-plus'
@@ -75,6 +83,18 @@ const logs = ref('')
 const autoScroll = ref(true)
 const logRef = ref<HTMLElement | null>(null)
 const lossChartRef = ref<HTMLElement | null>(null)
+const lossImageAvailable = ref(true)
+const lossImageLoaded = ref(false)
+
+const lossHistory = computed<any[]>(() => {
+  try {
+    const history = JSON.parse(task.value?.loss_history || '[]')
+    return Array.isArray(history) ? history.filter((item: any) => Number.isFinite(Number(item.loss))) : []
+  } catch { return [] }
+})
+const hasLossData = computed(() => lossHistory.value.length > 0)
+const isFinished = computed(() => ['completed', 'failed', 'stopped'].includes(task.value?.status))
+const lossImageUrl = computed(() => `/api/v1/finetune/${taskId}/loss-image?v=${encodeURIComponent(task.value?.updated_at || '')}`)
 
 let ws: WebSocket | null = null
 let chart: echarts.ECharts | null = null
@@ -97,7 +117,9 @@ async function loadTask() {
   try {
     const res = await finetuneApi.get(taskId)
     task.value = res.data.data
-    nextTick(() => initChart())
+    await nextTick()
+    initChart()
+    updateChart()
   } catch { ElMessage.error('加载任务失败') }
   finally { loading.value = false }
 }
@@ -132,7 +154,7 @@ function startPolling() {
 
 function initChart() {
   if (!lossChartRef.value) return
-  chart = echarts.init(lossChartRef.value)
+  chart = echarts.getInstanceByDom(lossChartRef.value) || echarts.init(lossChartRef.value)
   chart.setOption({
     grid: { left: 50, right: 20, bottom: 30, top: 10 },
     xAxis: { type: 'value', name: 'Step' },
@@ -144,12 +166,10 @@ function initChart() {
 }
 
 function updateChart() {
-  if (!chart || !task.value?.loss_history) return
-  try {
-    const history = JSON.parse(task.value.loss_history)
-    const data = history.map((h: any) => [h.step || h.step === 0 ? h.step : h.loss, h.loss])
-    chart.setOption({ series: [{ data }] })
-  } catch { /* ignore */ }
+  if (!chart) return
+  const data = lossHistory.value.map((h: any, index: number) => [Number.isFinite(Number(h.step)) ? Number(h.step) : index, Number(h.loss)])
+  chart.setOption({ series: [{ data }] })
+  if (data.length) nextTick(() => chart?.resize())
 }
 
 async function handleStop() {
@@ -173,3 +193,28 @@ function statusLabel(s: string) { const map: Record<string, string> = { pending:
 
 watch(logs, scrollLog)
 </script>
+
+<style scoped>
+.loss-placeholder,
+.loss-image-wrap {
+  height: 300px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: #909399;
+}
+
+.loss-image-wrap {
+  position: relative;
+}
+
+.loss-image-wrap img {
+  max-width: 100%;
+  max-height: 300px;
+  object-fit: contain;
+}
+
+.loss-image-wrap span {
+  position: absolute;
+}
+</style>

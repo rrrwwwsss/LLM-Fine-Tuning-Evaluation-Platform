@@ -1,4 +1,5 @@
 from fastapi import APIRouter, Depends, HTTPException
+from fastapi.responses import FileResponse
 from sqlalchemy.orm import Session
 from database import get_db
 from models import FinetuneTask
@@ -15,7 +16,9 @@ def list_tasks(db: Session = Depends(get_db)):
     return APIResponse(data=[
         FinetuneTaskListResponse(
             id=t.id, name=t.name, base_model=t.base_model,
-            status=t.status, progress=t.progress, created_at=t.created_at
+            status=t.status, progress=t.progress,
+            training_stage=FinetuneRunner.training_stage(t.yaml_config),
+            created_at=t.created_at
         ) for t in tasks
     ])
 
@@ -114,3 +117,15 @@ def get_logs(task_id: int):
         content = log_path.read_text(encoding="utf-8")
         return APIResponse(data=content)
     return APIResponse(data="")
+
+
+@router.get("/{task_id}/loss-image")
+def get_loss_image(task_id: int, db: Session = Depends(get_db)):
+    task = db.query(FinetuneTask).filter(FinetuneTask.id == task_id).first()
+    if not task:
+        raise HTTPException(status_code=404, detail="Task not found")
+    for output_dir in FinetuneRunner.output_directories(task):
+        image_path = output_dir / "training_loss.png"
+        if image_path.is_file():
+            return FileResponse(image_path, media_type="image/png")
+    raise HTTPException(status_code=404, detail="training_loss.png not found")

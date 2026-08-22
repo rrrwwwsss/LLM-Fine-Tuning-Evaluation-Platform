@@ -62,12 +62,18 @@
         </el-form-item>
         <el-form-item label="基础模型路径" required>
           <el-tooltip content="预训练模型的本地路径或 HuggingFace 模型名" placement="top">
-            <el-input v-model="form.model_name_or_path" placeholder="如: /path/to/Qwen3.5-VL-27B" />
+            <div class="path-input-row">
+              <el-input v-model="form.model_name_or_path" placeholder="如: /HTC/rws/Qwen/Qwen3.5-VL-27B" />
+              <ServerPathPicker v-model="form.model_name_or_path" button-text="浏览 Linux 目录" title="选择基础模型目录" />
+            </div>
           </el-tooltip>
         </el-form-item>
         <el-form-item label="微调权重路径">
           <el-tooltip content="LoRA 微调后的权重目录（可选）" placement="top">
-            <el-input v-model="form.adapter_path" placeholder="如: ./saves/qwen_lora_exp1" />
+            <div class="path-input-row">
+              <el-input v-model="form.adapter_path" placeholder="如: /HTC/rws/saves/qwen_lora_exp1" />
+              <ServerPathPicker v-model="form.adapter_path" button-text="浏览 Linux 目录" title="选择 LoRA 权重目录" />
+            </div>
           </el-tooltip>
         </el-form-item>
         <el-form-item label="输出 Token 数">
@@ -103,10 +109,16 @@
         <el-input v-model="editForm.name" />
       </el-form-item>
       <el-form-item label="基础模型路径">
-        <el-input v-model="editForm.model_name_or_path" />
+        <div class="path-input-row">
+          <el-input v-model="editForm.model_name_or_path" />
+          <ServerPathPicker v-model="editForm.model_name_or_path" button-text="浏览 Linux 目录" title="选择基础模型目录" />
+        </div>
       </el-form-item>
       <el-form-item label="微调权重路径">
-        <el-input v-model="editForm.adapter_path" placeholder="如: saves/finetune_models/qwen_lora_exp1" />
+        <div class="path-input-row">
+          <el-input v-model="editForm.adapter_path" placeholder="如: /HTC/rws/saves/finetune_models/qwen_lora_exp1" />
+          <ServerPathPicker v-model="editForm.adapter_path" button-text="浏览 Linux 目录" title="选择 LoRA 权重目录" />
+        </div>
       </el-form-item>
       <el-form-item label="模型模板">
         <el-input v-model="editForm.template" />
@@ -128,6 +140,7 @@ import { ref, onMounted, reactive } from "vue"
 import { useRouter } from "vue-router"
 import { modelApi } from "../api"
 import { ElMessage } from "element-plus"
+import ServerPathPicker from "../components/ServerPathPicker.vue"
 
 const router = useRouter()
 const services = ref<any[]>([])
@@ -235,3 +248,8 @@ function statusLabel(s: string) {
 }
 function formatTime(t: string) { if (!t) return ""; return new Date(t).toLocaleString("zh-CN") }
 </script>
+
+<style scoped>
+.path-input-row { display: flex; align-items: center; width: 100%; }
+.path-input-row .el-input { flex: 1; }
+</style>

@@ -8,6 +8,30 @@ export default api
 export const datasetApi = {
   list: () => api.get('/dataset/list'),
   get: (id: number) => api.get('/dataset/' + id),
+  create: (data: any) => api.post('/dataset/create', data),
+  getSchema: (id: number) => api.get('/dataset/' + id + '/schema'),
+  updateSchema: (id: number, data: any) => api.put('/dataset/' + id + '/schema', data),
+  getSource: (id: number, page = 1, pageSize = 50, filter: Record<string, any> = {}) => api.get('/dataset/' + id + '/source', { params: { page, page_size: pageSize, ...filter } }),
+  appendRows: (id: number, rows: Record<string, any>[]) => api.post('/dataset/' + id + '/rows', { rows }),
+  updateSourceRow: (id: number, rowIndex: number, updates: Record<string, any>) => api.put('/dataset/' + id + '/source-row', { row_index: rowIndex, updates }),
+  deleteSourceRow: (id: number, rowIndex: number) => api.delete('/dataset/' + id + '/source-row', { params: { row_index: rowIndex } }),
+  batchSourceRows: (id: number, data: Record<string, any>) => api.post('/dataset/' + id + '/source/batch', data),
+  uploadImage: (id: number, file: File) => {
+    const fd = new FormData()
+    fd.append('file', file)
+    return api.post('/dataset/' + id + '/images', fd)
+  },
+  importImageFolder: (id: number, files: File[], commonValues: Record<string, any> = {}, pathStripLevels = 1) => {
+    const fd = new FormData()
+    files.forEach(file => fd.append('files', file, file.name))
+    fd.append('common_values', JSON.stringify(commonValues))
+    fd.append('relative_paths', JSON.stringify(files.map(file => (file as any).webkitRelativePath || file.name)))
+    fd.append('path_strip_levels', String(pathStripLevels))
+    return api.post('/dataset/' + id + '/images/bulk', fd)
+  },
+  browseServerDirectories: (path = '') => api.get('/dataset/server-files', { params: { path } }),
+  inspectServerImageFolder: (path: string) => api.get('/dataset/server-files/inspect', { params: { path } }),
+  importServerImageFolder: (id: number, data: Record<string, any>) => api.post('/dataset/' + id + '/images/server-folder', data),
   preview: (id: number, n = 5) => api.get('/dataset/' + id + '/preview?n=' + n),
   upload: (name: string, file: File, prefixPath = '') => {
     const fd = new FormData()
@@ -16,6 +40,9 @@ export const datasetApi = {
     fd.append('file', file)
     return api.post('/dataset/upload', fd)
   },
+  uploadServerCsv: (name: string, csvPath: string, prefixPath = '') => api.post('/dataset/upload-server', {
+    name, csv_path: csvPath, prefix_path: prefixPath,
+  }),
   split: (id: number, trainRatio = 0.8) => api.post('/dataset/' + id + '/split', { train_ratio: trainRatio }),
   delete: (id: number) => api.delete('/dataset/' + id),
   previewSplit: (id: number, split = "train", page = 1, pageSize = 50) => api.get("/dataset/" + id + "/preview-split", { params: { split, page, page_size: pageSize } }),

@@ -4,7 +4,7 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 import logging
 from contextlib import asynccontextmanager
-from fastapi import FastAPI
+from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from database import init_db
 from services.process_tracker import kill_all
@@ -49,8 +49,6 @@ app.include_router(ws.router)
 app.include_router(dataset.router)
 app.include_router(model.router)
 
-
-
 @app.get("/api/file")
 async def serve_file(path: str = ""):
     import os
@@ -67,6 +65,28 @@ async def serve_file(path: str = ""):
 @app.get('/api/health')
 async def health():
     return {'status': 'ok', 'message': 'LLM Fine-Tuning & Evaluation Platform is running'}
+
+
+# Keep frontend routes after every API route. Vue uses history mode, so direct
+# refreshes such as /dataset must return index.html instead of a backend 404.
+from fastapi.staticfiles import StaticFiles
+from fastapi.responses import FileResponse
+from pathlib import Path
+from services.spa_service import resolve_spa_file
+_frontend_dist = Path(__file__).parent.parent / "frontend" / "dist"
+if _frontend_dist.exists():
+    _assets_dir = _frontend_dist / "assets"
+    if _assets_dir.is_dir():
+        app.mount("/assets", StaticFiles(directory=str(_assets_dir)), name="frontend-assets")
+
+    @app.get("/{full_path:path}", include_in_schema=False)
+    async def serve_frontend(full_path: str):
+        target = resolve_spa_file(_frontend_dist, full_path)
+        if target is None:
+            raise HTTPException(status_code=404, detail="Not Found")
+        return FileResponse(target)
+
+    logging.getLogger("backend").info(f"前端静态文件已加载: {_frontend_dist}")
 
 
 if __name__ == '__main__':

@@ -1,14 +1,44 @@
 ﻿import os
 import tempfile
 from fastapi import APIRouter, Body, Depends, HTTPException, UploadFile, File, Form
+from fastapi.responses import FileResponse
 from sqlalchemy.orm import Session
 from database import get_db
 from models import Dataset
-from schemas import DatasetResponse, DatasetListResponse, DatasetSplitRequest, APIResponse
+from schemas import (
+    DatasetResponse, DatasetListResponse, DatasetSplitRequest, APIResponse,
+    DatasetCreateRequest, DatasetSchemaUpdate, DatasetRowsCreate,
+    DatasetSourceRowUpdate, DatasetSourceBatchRequest, DatasetServerFolderImport,
+    DatasetServerCsvImport,
+)
 from services.dataset_service import DatasetService
 from config import BASE_DIR
 
 router = APIRouter(prefix="/api/v1/dataset", tags=["数据集管理"])
+
+
+def _dataset_response(ds: Dataset) -> DatasetResponse:
+    return DatasetResponse(
+        id=ds.id, name=ds.name, original_csv=ds.original_csv,
+        train_csv=ds.train_csv, test_csv=ds.test_csv,
+        train_json=ds.train_json, dataset_info_json=ds.dataset_info_json,
+        train_ratio=ds.train_ratio, status=ds.status,
+        total_rows=ds.total_rows, train_rows=ds.train_rows,
+        test_rows=ds.test_rows, columns=ds.columns,
+        created_at=ds.created_at,
+    )
+
+
+@router.post("/create", response_model=APIResponse)
+def create_dataset(data: DatasetCreateRequest):
+    try:
+        ds = DatasetService.create_dataset(
+            data.name, data.description, data.columns, data.train_ratio,
+            data.training_stage, data.image_prefix,
+        )
+        return APIResponse(data=_dataset_response(ds), message="Dataset created")
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=str(e))
 
 
 
@@ -23,6 +53,7 @@ def list_datasets_for_finetune():
             dataset_info_json=d.dataset_info_json or "",
             train_json=d.train_json or "",
             test_csv=d.test_csv or "",
+            training_stage=DatasetService.get_training_stage(d),
             created_at=d.created_at
         ) for d in datasets
     ])
@@ -39,6 +70,7 @@ def list_datasets_for_eval():
             dataset_info_json=d.dataset_info_json or "",
             train_json=d.train_json or "",
             test_csv=d.test_csv or "",
+            training_stage=DatasetService.get_training_stage(d),
             created_at=d.created_at
         ) for d in datasets
     ])
@@ -51,9 +83,26 @@ def list_datasets():
             id=d.id, name=d.name, status=d.status,
             total_rows=d.total_rows, train_rows=d.train_rows,
             test_rows=d.test_rows, train_ratio=d.train_ratio,
+            training_stage=DatasetService.get_training_stage(d),
             created_at=d.created_at
         ) for d in datasets
     ])
+
+
+@router.get("/server-files", response_model=APIResponse)
+def browse_server_directories(path: str = ""):
+    try:
+        return APIResponse(data=DatasetService.list_server_directory(path))
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+
+@router.get("/server-files/inspect", response_model=APIResponse)
+def inspect_server_image_directory(path: str):
+    try:
+        return APIResponse(data=DatasetService.inspect_server_image_folder(path))
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=str(e))
 
 
 @router.get("/{dataset_id}", response_model=APIResponse)
@@ -70,6 +119,142 @@ def get_dataset(dataset_id: int):
         test_rows=ds.test_rows, columns=ds.columns,
         created_at=ds.created_at
     ))
+
+
+@router.get("/{dataset_id}/schema", response_model=APIResponse)
+def get_dataset_schema(dataset_id: int):
+    try:
+        return APIResponse(data=DatasetService.get_schema(dataset_id))
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+
+@router.put("/{dataset_id}/schema", response_model=APIResponse)
+def update_dataset_schema(dataset_id: int, data: DatasetSchemaUpdate):
+    try:
+        result = DatasetService.update_schema(
+            dataset_id, data.description, data.columns, data.training_stage, data.image_prefix
+        )
+        return APIResponse(data=result, message="Schema updated")
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+
+@router.get("/{dataset_id}/source", response_model=APIResponse)
+def preview_dataset_source(
+    dataset_id: int,
+    page: int = 1,
+    page_size: int = 50,
+    filter_column: str = "",
+    filter_mode: str = "contains",
+    filter_value: str = "",
+):
+    try:
+        return APIResponse(data=DatasetService.preview_source(
+            dataset_id, page, page_size, filter_column, filter_mode, filter_value
+        ))
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+
+@router.get("/{dataset_id}/asset")
+def get_dataset_asset(dataset_id: int, path: str):
+    try:
+        asset_path = DatasetService.resolve_asset(dataset_id, path)
+        media_types = {
+            ".jpg": "image/jpeg", ".jpeg": "image/jpeg", ".png": "image/png",
+            ".gif": "image/gif", ".bmp": "image/bmp", ".webp": "image/webp",
+        }
+        return FileResponse(asset_path, media_type=media_types[asset_path.suffix.lower()])
+    except Exception as e:
+        raise HTTPException(status_code=404, detail=str(e))
+
+
+@router.post("/{dataset_id}/rows", response_model=APIResponse)
+def append_dataset_rows(dataset_id: int, data: DatasetRowsCreate):
+    try:
+        return APIResponse(data=DatasetService.append_source_rows(dataset_id, data.rows), message="Rows added")
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+
+@router.put("/{dataset_id}/source-row", response_model=APIResponse)
+def update_dataset_source_row(dataset_id: int, data: DatasetSourceRowUpdate):
+    try:
+        result = DatasetService.update_source_row(dataset_id, data.row_index, data.updates)
+        return APIResponse(data=result, message="Row updated")
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+
+@router.delete("/{dataset_id}/source-row", response_model=APIResponse)
+def delete_dataset_source_row(dataset_id: int, row_index: int):
+    try:
+        return APIResponse(data=DatasetService.delete_source_row(dataset_id, row_index), message="Row deleted")
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+
+@router.post("/{dataset_id}/source/batch", response_model=APIResponse)
+def batch_update_dataset_source(dataset_id: int, data: DatasetSourceBatchRequest):
+    try:
+        result = DatasetService.batch_source_rows(dataset_id, data.model_dump())
+        return APIResponse(data=result, message="Batch operation completed")
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+
+@router.post("/{dataset_id}/images", response_model=APIResponse)
+async def upload_dataset_image(dataset_id: int, file: UploadFile = File(...)):
+    try:
+        content = await file.read()
+        return APIResponse(data=DatasetService.save_image(dataset_id, file.filename or "image", content), message="Image uploaded")
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+
+@router.post("/{dataset_id}/images/bulk", response_model=APIResponse)
+async def import_dataset_image_folder(
+    dataset_id: int,
+    files: list[UploadFile] = File(...),
+    common_values: str = Form("{}"),
+    relative_paths: str = Form("[]"),
+    path_strip_levels: int = Form(1),
+):
+    try:
+        import json
+        parsed_common_values = json.loads(common_values)
+        if not isinstance(parsed_common_values, dict):
+            raise Exception("common_values must be a JSON object")
+        parsed_relative_paths = json.loads(relative_paths)
+        if not isinstance(parsed_relative_paths, list):
+            raise Exception("relative_paths must be a JSON array")
+        if parsed_relative_paths and len(parsed_relative_paths) != len(files):
+            raise Exception("relative_paths must match the uploaded files")
+        payload = [
+            (
+                str(parsed_relative_paths[index]) if parsed_relative_paths else (file.filename or "image"),
+                await file.read(),
+            )
+            for index, file in enumerate(files)
+        ]
+        result = DatasetService.import_image_folder(
+            dataset_id, payload, parsed_common_values, path_strip_levels
+        )
+        return APIResponse(data=result, message="Images imported and rows created")
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+
+@router.post("/{dataset_id}/images/server-folder", response_model=APIResponse)
+def import_server_image_folder(dataset_id: int, data: DatasetServerFolderImport):
+    try:
+        result = DatasetService.import_server_image_folder(
+            dataset_id, data.folder_path, data.path_base, data.common_values
+        )
+        return APIResponse(data=result, message="Server images imported and rows created")
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=str(e))
 
 
 
@@ -134,6 +319,15 @@ async def upload_dataset(name: str = Form(...), file: UploadFile = File(...), pr
             test_rows=ds.test_rows, columns=ds.columns,
             created_at=ds.created_at
         ))
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+
+@router.post("/upload-server", response_model=APIResponse)
+def upload_server_dataset(data: DatasetServerCsvImport):
+    try:
+        ds = DatasetService.upload_server_csv(data.name, data.csv_path, data.prefix_path)
+        return APIResponse(data=_dataset_response(ds), message="Server CSV imported")
     except Exception as e:
         raise HTTPException(status_code=400, detail=str(e))
 

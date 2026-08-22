@@ -55,7 +55,9 @@ const backendStatus = ref('checking')
 
 const pageTitle = computed(() => {
   const map: Record<string, string> = {
-        '/dataset': '数据集管理',    '/finetune': '微调任务管理',
+        '/dataset': '数据集管理',
+    '/dataset/create': '数据集制作',
+    '/finetune': '微调任务管理',
     '/eval': '评测任务管理',
     '/model': '模型服务管理',
     '/model/chat': '模型对话测试'
